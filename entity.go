@@ -48,6 +48,10 @@ func (o EntityOp) String() string {
 // EntityHandler is a function that receives Entity updates
 type EntityHandler func(*Entity, EntityOp) error
 
+// EntityChangeHandler receives each entity update with the names of the fields it set, in the order read.
+// The slice is reused between calls. A created entity's fields are its whole state, read with Map.
+type EntityChangeHandler func(*Entity, EntityOp, []string) error
+
 // Entity represents a single game entity in the replay
 type Entity struct {
 	index  int32
@@ -251,8 +255,9 @@ func (p *Parser) FilterEntity(fb func(*Entity) bool) []*Entity {
 // entityOpTuple pairs an entity with the operation performed on it. Updates are
 // buffered during a PacketEntities message, then dispatched to handlers.
 type entityOpTuple struct {
-	e  *Entity
-	op EntityOp
+	e        *Entity
+	op       EntityOp
+	from, to int // the update's field names in Parser.changeNames
 }
 
 // Internal Callback for OnCSVCMsg_PacketEntities.
@@ -283,10 +288,13 @@ func (p *Parser) processPacketEntities(entityData []byte, updatedEntries int32, 
 	}
 
 	tuples := p.entityTuples[:0]
+	p.changeNames = p.changeNames[:0]
+	var from int
 
 	for ; updates > 0; updates-- {
 		index += int32(r.readUBitVar()) + 1
 		op = EntityOpNone
+		from = len(p.changeNames)
 
 		cmd = r.readBits(2)
 		if cmd&0x01 == 0 {
@@ -332,6 +340,9 @@ func (p *Parser) processPacketEntities(entityData []byte, updatedEntries int32, 
 				}
 
 				p.fpBuf = readFields(r, e.class.serializer, e.state, p.fpBuf)
+				if len(p.entityChangeHandlers) > 0 {
+					p.changeNames = e.class.appendFieldNames(p.changeNames, p.fpBuf)
+				}
 			}
 
 		} else {
@@ -350,7 +361,7 @@ func (p *Parser) processPacketEntities(entityData []byte, updatedEntries int32, 
 			}
 		}
 
-		tuples = append(tuples, entityOpTuple{e, op})
+		tuples = append(tuples, entityOpTuple{e, op, from, len(p.changeNames)})
 	}
 
 	var err error
@@ -359,6 +370,16 @@ dispatch:
 		for i := range tuples {
 			if err = h(tuples[i].e, tuples[i].op); err != nil {
 				break dispatch
+			}
+		}
+	}
+	if err == nil {
+	changes:
+		for _, h := range p.entityChangeHandlers {
+			for i := range tuples {
+				if err = h(tuples[i].e, tuples[i].op, p.changeNames[tuples[i].from:tuples[i].to]); err != nil {
+					break changes
+				}
 			}
 		}
 	}
@@ -376,4 +397,9 @@ dispatch:
 // is created, updated, deleted, etc.
 func (p *Parser) OnEntity(h EntityHandler) {
 	p.entityHandlers = append(p.entityHandlers, h)
+}
+
+// OnEntityChange registers an EntityChangeHandler, called after the EntityHandlers with the fields each update set.
+func (p *Parser) OnEntityChange(h EntityChangeHandler) {
+	p.entityChangeHandlers = append(p.entityChangeHandlers, h)
 }

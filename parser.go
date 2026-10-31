@@ -45,6 +45,8 @@ type Parser struct {
 	entities                   []*Entity
 	entityFullPackets          int
 	entityHandlers             []EntityHandler
+	entityChangeHandlers       []EntityChangeHandler
+	changeNames                []string
 	gameEventHandlers          map[string][]GameEventHandler
 	gameEventNames             map[int32]string
 	gameEventTypes             map[string]*gameEventType

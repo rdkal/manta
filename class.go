@@ -22,10 +22,29 @@ type class struct {
 	// is resolved once per class instead of once per entity.
 	fpCache map[string]*fieldPath
 	fpNoop  map[string]bool
+
+	// nameCache memoizes field path -> name, for EntityChangeHandlers.
+	nameCache map[fieldPath]string
 }
 
 func (c *class) getNameForFieldPath(fp *fieldPath) string {
 	return strings.Join(c.serializer.getNameForFieldPath(fp, 0), ".")
+}
+
+// appendFieldNames appends the name of each field path, resolved once per class.
+func (c *class) appendFieldNames(names []string, fps []fieldPath) []string {
+	if c.nameCache == nil {
+		c.nameCache = make(map[fieldPath]string)
+	}
+	for i := range fps {
+		n, ok := c.nameCache[fps[i]]
+		if !ok {
+			n = c.getNameForFieldPath(&fps[i])
+			c.nameCache[fps[i]] = n
+		}
+		names = append(names, n)
+	}
+	return names
 }
 
 func (c *class) getTypeForFieldPath(fp *fieldPath) *fieldType {
